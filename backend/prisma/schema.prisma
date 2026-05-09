@@ -1,0 +1,98 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  password  String
+  role      String   @default("admin")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Device {
+  id          Int      @id @default(autoincrement())
+  name        String
+  type        DeviceType
+  location    String
+  code        String   @unique
+  status      DeviceStatus @default(ONLINE)
+  x           Float    @default(0)
+  y           Float    @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  dataRecords DataRecord[]
+  alerts      Alert[]
+}
+
+model DataRecord {
+  id        Int      @id @default(autoincrement())
+  deviceId  Int
+  value     Float
+  timestamp DateTime @default(now())
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  @@index([deviceId])
+  @@index([timestamp])
+}
+
+model AlertRule {
+  id          Int       @id @default(autoincrement())
+  deviceType  DeviceType @unique
+  threshold   Float
+  condition   AlertCondition
+  level       AlertLevel
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Alert {
+  id          Int         @id @default(autoincrement())
+  deviceId    Int
+  level       AlertLevel
+  message     String
+  status      AlertStatus @default(UNPROCESSED)
+  triggeredAt DateTime    @default(now())
+  confirmedAt DateTime?
+  resolvedAt  DateTime?
+  device      Device      @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  @@index([deviceId])
+  @@index([status])
+  @@index([level])
+}
+
+enum DeviceType {
+  TEMPERATURE
+  HUMIDITY
+  CAMERA
+  SMOKE
+}
+
+enum DeviceStatus {
+  ONLINE
+  OFFLINE
+  FAULT
+}
+
+enum AlertLevel {
+  EMERGENCY
+  WARNING
+  INFO
+}
+
+enum AlertCondition {
+  GREATER_THAN
+  LESS_THAN
+}
+
+enum AlertStatus {
+  UNPROCESSED
+  CONFIRMED
+  RESOLVED
+}
