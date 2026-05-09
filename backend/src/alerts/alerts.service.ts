@@ -208,6 +208,34 @@ export class AlertsService {
     return updated;
   }
 
+  async triggerAlert(data: {
+    deviceId: number;
+    alertType: string;
+    level: AlertLevel;
+    message: string;
+  }) {
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+
+    const recentAlert = await this.prisma.alert.findFirst({
+      where: {
+        deviceId: data.deviceId,
+        message: data.message,
+        status: { in: [AlertStatus.UNPROCESSED, AlertStatus.CONFIRMED] },
+        triggeredAt: { gte: tenMinutesAgo },
+      },
+    });
+
+    if (recentAlert) {
+      return null;
+    }
+
+    return this.createAlert({
+      deviceId: data.deviceId,
+      level: data.level,
+      message: data.message,
+    });
+  }
+
   async checkAndCreateAlert(device: any, value: number) {
     const rule = await this.prisma.alertRule.findUnique({
       where: { deviceType: device.type },
@@ -232,21 +260,12 @@ export class AlertsService {
     }
 
     if (shouldAlert) {
-      const recentAlert = await this.prisma.alert.findFirst({
-        where: {
-          deviceId: device.id,
-          status: { in: [AlertStatus.UNPROCESSED, AlertStatus.CONFIRMED] },
-          triggeredAt: { gte: new Date(Date.now() - 5 * 60 * 1000) },
-        },
+      return this.triggerAlert({
+        deviceId: device.id,
+        alertType: `${device.type}_${rule.condition}_${rule.threshold}`,
+        level: rule.level,
+        message: rule.description || `${device.name} 触发告警`,
       });
-
-      if (!recentAlert) {
-        return this.createAlert({
-          deviceId: device.id,
-          level: rule.level,
-          message: rule.description || `${device.name} 触发告警`,
-        });
-      }
     }
 
     return null;
