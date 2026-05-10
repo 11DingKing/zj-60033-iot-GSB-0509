@@ -82,16 +82,25 @@ export class StatisticsService {
   }
 
   async getDeviceOnlineRate() {
-    const total = await this.prisma.device.count();
-    const online = await this.prisma.device.count({
-      where: { status: DeviceStatus.ONLINE },
-    });
-    const offline = await this.prisma.device.count({
-      where: { status: DeviceStatus.OFFLINE },
-    });
-    const fault = await this.prisma.device.count({
-      where: { status: DeviceStatus.FAULT },
-    });
+    const allDevices = await this.prisma.device.findMany();
+
+    let online = 0;
+    let offline = 0;
+    let fault = 0;
+
+    for (const device of allDevices) {
+      const heartbeatKey = `device:heartbeat:${device.id}`;
+      const isAlive = await this.redisService.exists(heartbeatKey);
+      if (isAlive) {
+        online++;
+      } else if (device.status === DeviceStatus.FAULT) {
+        fault++;
+      } else {
+        offline++;
+      }
+    }
+
+    const total = allDevices.length;
 
     return {
       total,

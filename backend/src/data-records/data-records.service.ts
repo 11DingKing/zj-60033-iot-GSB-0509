@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { CreateDataRecordDto, QueryDataRecordDto } from "./dto/data-record.dto";
@@ -6,6 +6,9 @@ import { DeviceType, DeviceStatus } from "@prisma/client";
 
 @Injectable()
 export class DataRecordsService {
+  private readonly logger = new Logger(DataRecordsService.name);
+  private readonly DLQ_KEY = "dlq:data-records";
+
   constructor(
     private prisma: PrismaService,
     private redisService: RedisService,
@@ -26,6 +29,9 @@ export class DataRecordsService {
     });
 
     await this.cacheLatestData(dataRecord);
+
+    const heartbeatKey = `device:heartbeat:${dataRecord.deviceId}`;
+    await this.redisService.set(heartbeatKey, String(Date.now()), 60);
 
     return dataRecord;
   }
@@ -200,9 +206,64 @@ export class DataRecordsService {
         value = 0;
     }
 
-    return this.create({
+    const dto: CreateDataRecordDto = {
       deviceId: device.id,
       value: parseFloat(value.toFixed(2)),
-    });
+    };
+
+    try {
+      return await this.create(dto);
+    } catch (error) {
+      this.logger.error(
+        `设备 ${device.name} 数据写入失败，写入DLQ: ${error.message}`,
+      );
+      await this.redisService.lpush(
+        this.DLQ_KEY,
+        JSON.stringify({
+          ...dto,
+          _failedAt: new Date().toISOString(),
+          _error: error.message,
+        }),
+      );
+      return null;
+    }
+  }
+
+  async retryFromDLQ(
+    maxRetries: number = 50,
+  ): Promise<{ retried: number; failed: number }> {
+    let retried = 0;
+    let failed = 0;
+
+    const queueLen = await this.redisService.llen(this.DLQ_KEY);
+    const batchSize = Math.min(queueLen, maxRetries);
+
+    for (let i = 0; i < batchSize; i++) {
+      const raw = await this.redisService.rpop(this.DLQ_KEY);
+      if (!raw) break;
+
+      try {
+        const item = JSON.parse(raw);
+        const { _failedAt, _error, ...dto } = item;
+        await this.create(dto as CreateDataRecordDto);
+        retried++;
+      } catch (error) {
+        const item = JSON.parse(raw);
+        const retryCount = (item._retryCount || 0) + 1;
+
+        if (retryCount >= 3) {
+          this.logger.error(`DLQ重试超过3次，丢弃记录: ${raw}`);
+          failed++;
+        } else {
+          await this.redisService.lpush(
+            this.DLQ_KEY,
+            JSON.stringify({ ...item, _retryCount: retryCount }),
+          );
+          failed++;
+        }
+      }
+    }
+
+    return { retried, failed };
   }
 }

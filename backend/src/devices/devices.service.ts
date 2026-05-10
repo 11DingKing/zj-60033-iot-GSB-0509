@@ -2,14 +2,23 @@ import {
   Injectable,
   ConflictException,
   NotFoundException,
+  Logger,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { RedisService } from "../redis/redis.service";
 import { CreateDeviceDto, UpdateDeviceDto } from "./dto/device.dto";
 import { DeviceType, DeviceStatus } from "@prisma/client";
 
 @Injectable()
 export class DevicesService {
-  constructor(private prisma: PrismaService) {}
+  private readonly logger = new Logger(DevicesService.name);
+  private readonly HEARTBEAT_PREFIX = "device:heartbeat:";
+  private readonly HEARTBEAT_TTL = 60;
+
+  constructor(
+    private prisma: PrismaService,
+    private redisService: RedisService,
+  ) {}
 
   async create(createDeviceDto: CreateDeviceDto) {
     const existing = await this.prisma.device.findUnique({
@@ -91,23 +100,54 @@ export class DevicesService {
     });
   }
 
+  async isDeviceOnline(deviceId: number): Promise<boolean> {
+    const heartbeatKey = `${this.HEARTBEAT_PREFIX}${deviceId}`;
+    const exists = await this.redisService.exists(heartbeatKey);
+    return exists === 1;
+  }
+
+  async updateHeartbeat(deviceId: number): Promise<void> {
+    const heartbeatKey = `${this.HEARTBEAT_PREFIX}${deviceId}`;
+    await this.redisService.set(
+      heartbeatKey,
+      String(Date.now()),
+      this.HEARTBEAT_TTL,
+    );
+  }
+
   async getOnlineDevices() {
-    return this.prisma.device.findMany({
-      where: { status: DeviceStatus.ONLINE },
-    });
+    const allDevices = await this.prisma.device.findMany();
+    const onlineDevices = [];
+
+    for (const device of allDevices) {
+      const isOnline = await this.isDeviceOnline(device.id);
+      if (isOnline) {
+        onlineDevices.push(device);
+      }
+    }
+
+    return onlineDevices;
   }
 
   async getDeviceStats() {
-    const total = await this.prisma.device.count();
-    const online = await this.prisma.device.count({
-      where: { status: DeviceStatus.ONLINE },
-    });
-    const offline = await this.prisma.device.count({
-      where: { status: DeviceStatus.OFFLINE },
-    });
-    const fault = await this.prisma.device.count({
-      where: { status: DeviceStatus.FAULT },
-    });
+    const allDevices = await this.prisma.device.findMany();
+
+    let online = 0;
+    let offline = 0;
+    let fault = 0;
+
+    for (const device of allDevices) {
+      const isOnline = await this.isDeviceOnline(device.id);
+      if (isOnline) {
+        online++;
+      } else if (device.status === DeviceStatus.FAULT) {
+        fault++;
+      } else {
+        offline++;
+      }
+    }
+
+    const total = allDevices.length;
 
     const typeStats = await this.prisma.device.groupBy({
       by: ["type"],

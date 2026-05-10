@@ -6,19 +6,39 @@ import {
   Param,
   Query,
   UseGuards,
+  Logger,
 } from "@nestjs/common";
 import { AuthGuard } from "@nestjs/passport";
 import { DataRecordsService } from "./data-records.service";
 import { CreateDataRecordDto, QueryDataRecordDto } from "./dto/data-record.dto";
+import { RedisService } from "../redis/redis.service";
 
 @UseGuards(AuthGuard("jwt"))
 @Controller("data-records")
 export class DataRecordsController {
-  constructor(private readonly dataRecordsService: DataRecordsService) {}
+  private readonly logger = new Logger(DataRecordsController.name);
+
+  constructor(
+    private readonly dataRecordsService: DataRecordsService,
+    private readonly redisService: RedisService,
+  ) {}
 
   @Post()
-  create(@Body() createDataRecordDto: CreateDataRecordDto) {
-    return this.dataRecordsService.create(createDataRecordDto);
+  async create(@Body() createDataRecordDto: CreateDataRecordDto) {
+    try {
+      return await this.dataRecordsService.create(createDataRecordDto);
+    } catch (error) {
+      this.logger.error(`数据记录创建失败，写入DLQ: ${error.message}`);
+      await this.redisService.lpush(
+        "dlq:data-records",
+        JSON.stringify({
+          ...createDataRecordDto,
+          _failedAt: new Date().toISOString(),
+          _error: error.message,
+        }),
+      );
+      throw error;
+    }
   }
 
   @Get("latest")
