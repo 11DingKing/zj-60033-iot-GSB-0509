@@ -22,11 +22,13 @@ export class SchedulerService {
     this.logger.debug("开始执行定时数据生成任务...");
 
     try {
-      const onlineDevices = await this.devicesService.getOnlineDevices();
-      this.logger.log(`发现 ${onlineDevices.length} 个在线设备`);
+      const allDevices = await this.devicesService.findAll();
+      this.logger.log(`发现 ${allDevices.length} 个设备`);
 
-      for (const device of onlineDevices) {
+      for (const device of allDevices) {
         try {
+          await this.devicesService.updateHeartbeat(device.id);
+
           const dataRecord =
             await this.dataRecordsService.generateMockData(device);
 
