@@ -142,15 +142,22 @@ export class DevicesService {
 
   async getDeviceStats() {
     const total = await this.prisma.device.count();
-    const online = await this.prisma.device.count({
-      where: { status: DeviceStatus.ONLINE },
-    });
-    const offline = await this.prisma.device.count({
-      where: { status: DeviceStatus.OFFLINE },
-    });
-    const fault = await this.prisma.device.count({
-      where: { status: DeviceStatus.FAULT },
-    });
+    const devices = await this.prisma.device.findMany();
+
+    let online = 0;
+    let offline = 0;
+    let fault = 0;
+
+    for (const device of devices) {
+      const isOnline = await this.isDeviceOnline(device.id);
+      if (isOnline) {
+        online++;
+      } else if (device.status === DeviceStatus.FAULT) {
+        fault++;
+      } else {
+        offline++;
+      }
+    }
 
     const typeStats = await this.prisma.device.groupBy({
       by: ["type"],
