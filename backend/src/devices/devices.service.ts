@@ -2,14 +2,45 @@ import {
   Injectable,
   ConflictException,
   NotFoundException,
+  Logger,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { RedisService } from "../redis/redis.service";
 import { CreateDeviceDto, UpdateDeviceDto } from "./dto/device.dto";
 import { DeviceType, DeviceStatus } from "@prisma/client";
 
 @Injectable()
 export class DevicesService {
-  constructor(private prisma: PrismaService) {}
+  private readonly logger = new Logger(DevicesService.name);
+
+  constructor(
+    private prisma: PrismaService,
+    private redisService: RedisService,
+  ) {}
+
+  private getHeartbeatKey(deviceId: number): string {
+    return `device:heartbeat:${deviceId}`;
+  }
+
+  async isDeviceOnline(deviceId: number): Promise<boolean> {
+    const heartbeatKey = this.getHeartbeatKey(deviceId);
+    const exists = await this.redisService.exists(heartbeatKey);
+    return exists > 0;
+  }
+
+  async updateDeviceHeartbeat(deviceId: number): Promise<void> {
+    const heartbeatKey = this.getHeartbeatKey(deviceId);
+    await this.redisService.set(heartbeatKey, "1", 60);
+  }
+
+  async enrichDeviceWithOnlineStatus(device: any): Promise<any> {
+    const isOnline = await this.isDeviceOnline(device.id);
+    return {
+      ...device,
+      isOnline,
+      effectiveStatus: isOnline ? DeviceStatus.ONLINE : DeviceStatus.OFFLINE,
+    };
+  }
 
   async create(createDeviceDto: CreateDeviceDto) {
     const existing = await this.prisma.device.findUnique({
@@ -26,9 +57,13 @@ export class DevicesService {
   }
 
   async findAll() {
-    return this.prisma.device.findMany({
+    const devices = await this.prisma.device.findMany({
       orderBy: { createdAt: "desc" },
     });
+
+    return Promise.all(
+      devices.map((device) => this.enrichDeviceWithOnlineStatus(device)),
+    );
   }
 
   async findByType(type: DeviceType) {
@@ -92,22 +127,37 @@ export class DevicesService {
   }
 
   async getOnlineDevices() {
-    return this.prisma.device.findMany({
-      where: { status: DeviceStatus.ONLINE },
-    });
+    const devices = await this.prisma.device.findMany();
+    const onlineDevices = [];
+
+    for (const device of devices) {
+      const isOnline = await this.isDeviceOnline(device.id);
+      if (isOnline) {
+        onlineDevices.push(await this.enrichDeviceWithOnlineStatus(device));
+      }
+    }
+
+    return onlineDevices;
   }
 
   async getDeviceStats() {
     const total = await this.prisma.device.count();
-    const online = await this.prisma.device.count({
-      where: { status: DeviceStatus.ONLINE },
-    });
-    const offline = await this.prisma.device.count({
-      where: { status: DeviceStatus.OFFLINE },
-    });
-    const fault = await this.prisma.device.count({
-      where: { status: DeviceStatus.FAULT },
-    });
+    const devices = await this.prisma.device.findMany();
+
+    let online = 0;
+    let offline = 0;
+    let fault = 0;
+
+    for (const device of devices) {
+      const isOnline = await this.isDeviceOnline(device.id);
+      if (isOnline) {
+        online++;
+      } else if (device.status === DeviceStatus.FAULT) {
+        fault++;
+      } else {
+        offline++;
+      }
+    }
 
     const typeStats = await this.prisma.device.groupBy({
       by: ["type"],

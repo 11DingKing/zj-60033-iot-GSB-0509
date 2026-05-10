@@ -232,11 +232,13 @@ export class AlertsService {
     }
 
     if (shouldAlert) {
+      const message = rule.description || `${device.name} 触发告警`;
       const recentAlert = await this.prisma.alert.findFirst({
         where: {
           deviceId: device.id,
+          message: message,
           status: { in: [AlertStatus.UNPROCESSED, AlertStatus.CONFIRMED] },
-          triggeredAt: { gte: new Date(Date.now() - 5 * 60 * 1000) },
+          triggeredAt: { gte: new Date(Date.now() - 10 * 60 * 1000) },
         },
       });
 
@@ -244,7 +246,7 @@ export class AlertsService {
         return this.createAlert({
           deviceId: device.id,
           level: rule.level,
-          message: rule.description || `${device.name} 触发告警`,
+          message: message,
         });
       }
     }

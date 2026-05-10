@@ -47,4 +47,20 @@ export class SchedulerService {
       this.logger.error(`定时任务执行失败: ${error.message}`);
     }
   }
+
+  @Cron("* * * * *")
+  async handleDLQRetry() {
+    this.logger.debug("开始执行DLQ重试任务...");
+
+    try {
+      const result = await this.dataRecordsService.processDLQ();
+      if (result.processed > 0 || result.failed > 0) {
+        this.logger.log(
+          `DLQ重试任务完成: 成功 ${result.processed} 条，失败 ${result.failed} 条`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(`DLQ重试任务执行失败: ${error.message}`);
+    }
+  }
 }

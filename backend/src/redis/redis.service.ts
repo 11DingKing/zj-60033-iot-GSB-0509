@@ -19,9 +19,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     const redisUrl = this.configService.get<string>("REDIS_URL");
 
     if (!redisUrl) {
-      this.logger.warn(
-        "REDIS_URL 未配置，Redis 缓存功能将被禁用",
-      );
+      this.logger.warn("REDIS_URL 未配置，Redis 缓存功能将被禁用");
       return;
     }
 
@@ -110,11 +108,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async hset(
-    key: string,
-    field: string,
-    value: string,
-  ): Promise<number> {
+  async hset(key: string, field: string, value: string): Promise<number> {
     if (!this.isConnected || !this.client) {
       return 0;
     }
@@ -183,6 +177,54 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       this.logger.debug(`Redis keys 失败: ${(error as Error).message}`);
       return [];
+    }
+  }
+
+  async lpush(key: string, ...values: string[]): Promise<number> {
+    if (!this.isConnected || !this.client) {
+      return 0;
+    }
+    try {
+      return await this.client.lpush(key, ...values);
+    } catch (error) {
+      this.logger.debug(`Redis lpush 失败: ${(error as Error).message}`);
+      return 0;
+    }
+  }
+
+  async rpop(key: string): Promise<string | null> {
+    if (!this.isConnected || !this.client) {
+      return null;
+    }
+    try {
+      return await this.client.rpop(key);
+    } catch (error) {
+      this.logger.debug(`Redis rpop 失败: ${(error as Error).message}`);
+      return null;
+    }
+  }
+
+  async lrange(key: string, start: number, stop: number): Promise<string[]> {
+    if (!this.isConnected || !this.client) {
+      return [];
+    }
+    try {
+      return await this.client.lrange(key, start, stop);
+    } catch (error) {
+      this.logger.debug(`Redis lrange 失败: ${(error as Error).message}`);
+      return [];
+    }
+  }
+
+  async llen(key: string): Promise<number> {
+    if (!this.isConnected || !this.client) {
+      return 0;
+    }
+    try {
+      return await this.client.llen(key);
+    } catch (error) {
+      this.logger.debug(`Redis llen 失败: ${(error as Error).message}`);
+      return 0;
     }
   }
 }
