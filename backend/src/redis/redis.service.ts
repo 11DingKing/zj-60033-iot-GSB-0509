@@ -185,4 +185,52 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       return [];
     }
   }
+
+  async lpush(key: string, value: string): Promise<number> {
+    if (!this.isConnected || !this.client) {
+      return 0;
+    }
+    try {
+      return await this.client.lpush(key, value);
+    } catch (error) {
+      this.logger.debug(`Redis lpush 失败: ${(error as Error).message}`);
+      return 0;
+    }
+  }
+
+  async lrange(key: string, start: number, stop: number): Promise<string[]> {
+    if (!this.isConnected || !this.client) {
+      return [];
+    }
+    try {
+      return await this.client.lrange(key, start, stop);
+    } catch (error) {
+      this.logger.debug(`Redis lrange 失败: ${(error as Error).message}`);
+      return [];
+    }
+  }
+
+  async lpop(key: string): Promise<string | null> {
+    if (!this.isConnected || !this.client) {
+      return null;
+    }
+    try {
+      return await this.client.lpop(key);
+    } catch (error) {
+      this.logger.debug(`Redis lpop 失败: ${(error as Error).message}`);
+      return null;
+    }
+  }
+
+  async llen(key: string): Promise<number> {
+    if (!this.isConnected || !this.client) {
+      return 0;
+    }
+    try {
+      return await this.client.llen(key);
+    } catch (error) {
+      this.logger.debug(`Redis llen 失败: ${(error as Error).message}`);
+      return 0;
+    }
+  }
 }

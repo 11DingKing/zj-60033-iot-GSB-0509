@@ -236,7 +236,7 @@ export class AlertsService {
         where: {
           deviceId: device.id,
           status: { in: [AlertStatus.UNPROCESSED, AlertStatus.CONFIRMED] },
-          triggeredAt: { gte: new Date(Date.now() - 5 * 60 * 1000) },
+          triggeredAt: { gte: new Date(Date.now() - 10 * 60 * 1000) },
         },
       });
 

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { RedisService } from "../redis/redis.service";
 import { CreateDataRecordDto, QueryDataRecordDto } from "./dto/data-record.dto";
@@ -6,18 +6,87 @@ import { DeviceType, DeviceStatus } from "@prisma/client";
 
 @Injectable()
 export class DataRecordsService {
+  private readonly logger = new Logger(DataRecordsService.name);
+  private readonly DLQ_KEY = "dlq:data-records";
+
   constructor(
     private prisma: PrismaService,
     private redisService: RedisService,
   ) {}
 
   async create(createDataRecordDto: CreateDataRecordDto) {
+    try {
+      const device = await this.prisma.device.findUnique({
+        where: { id: createDataRecordDto.deviceId },
+      });
+
+      if (!device) {
+        throw new NotFoundException("设备不存在");
+      }
+
+      const dataRecord = await this.prisma.dataRecord.create({
+        data: createDataRecordDto,
+        include: { device: true },
+      });
+
+      await this.cacheLatestData(dataRecord);
+
+      return dataRecord;
+    } catch (error) {
+      this.logger.error(
+        `数据记录创建失败，写入 DLQ: ${(error as Error).message}`,
+      );
+      await this.sendToDLQ(createDataRecordDto);
+      throw error;
+    }
+  }
+
+  private async sendToDLQ(data: CreateDataRecordDto) {
+    try {
+      await this.redisService.lpush(
+        this.DLQ_KEY,
+        JSON.stringify({
+          data,
+          timestamp: Date.now(),
+          retryCount: 0,
+        }),
+      );
+    } catch (dlqError) {
+      this.logger.error(`写入 DLQ 失败: ${(dlqError as Error).message}`);
+    }
+  }
+
+  async processDLQ() {
+    const batchSize = 100;
+    let processed = 0;
+
+    while (processed < batchSize) {
+      const itemStr = await this.redisService.lpop(this.DLQ_KEY);
+      if (!itemStr) {
+        break;
+      }
+
+      try {
+        const item = JSON.parse(itemStr);
+        await this.createFromDLQ(item.data);
+        processed++;
+      } catch (error) {
+        this.logger.error(`处理 DLQ 数据失败: ${(error as Error).message}`);
+      }
+    }
+
+    if (processed > 0) {
+      this.logger.log(`成功处理 ${processed} 条 DLQ 数据`);
+    }
+  }
+
+  private async createFromDLQ(createDataRecordDto: CreateDataRecordDto) {
     const device = await this.prisma.device.findUnique({
       where: { id: createDataRecordDto.deviceId },
     });
 
     if (!device) {
-      throw new NotFoundException("设备不存在");
+      return;
     }
 
     const dataRecord = await this.prisma.dataRecord.create({
@@ -26,8 +95,6 @@ export class DataRecordsService {
     });
 
     await this.cacheLatestData(dataRecord);
-
-    return dataRecord;
   }
 
   private async cacheLatestData(dataRecord: any) {

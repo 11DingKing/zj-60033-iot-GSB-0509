@@ -4,12 +4,16 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { RedisService } from "../redis/redis.service";
 import { CreateDeviceDto, UpdateDeviceDto } from "./dto/device.dto";
 import { DeviceType, DeviceStatus } from "@prisma/client";
 
 @Injectable()
 export class DevicesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private redisService: RedisService,
+  ) {}
 
   async create(createDeviceDto: CreateDeviceDto) {
     const existing = await this.prisma.device.findUnique({
@@ -91,23 +95,44 @@ export class DevicesService {
     });
   }
 
+  async isDeviceOnline(deviceId: number): Promise<boolean> {
+    const heartbeatKey = `device:heartbeat:${deviceId}`;
+    const heartbeatExists = await this.redisService.exists(heartbeatKey);
+    return heartbeatExists > 0;
+  }
+
   async getOnlineDevices() {
-    return this.prisma.device.findMany({
-      where: { status: DeviceStatus.ONLINE },
-    });
+    const devices = await this.prisma.device.findMany();
+    const onlineDevices = [];
+
+    for (const device of devices) {
+      const isOnline = await this.isDeviceOnline(device.id);
+      if (isOnline) {
+        onlineDevices.push(device);
+      }
+    }
+
+    return onlineDevices;
   }
 
   async getDeviceStats() {
-    const total = await this.prisma.device.count();
-    const online = await this.prisma.device.count({
-      where: { status: DeviceStatus.ONLINE },
-    });
-    const offline = await this.prisma.device.count({
-      where: { status: DeviceStatus.OFFLINE },
-    });
-    const fault = await this.prisma.device.count({
-      where: { status: DeviceStatus.FAULT },
-    });
+    const devices = await this.prisma.device.findMany();
+    let online = 0;
+    let offline = 0;
+    let fault = 0;
+
+    for (const device of devices) {
+      if (device.status === DeviceStatus.FAULT) {
+        fault++;
+      } else {
+        const isOnline = await this.isDeviceOnline(device.id);
+        if (isOnline) {
+          online++;
+        } else {
+          offline++;
+        }
+      }
+    }
 
     const typeStats = await this.prisma.device.groupBy({
       by: ["type"],
@@ -117,11 +142,11 @@ export class DevicesService {
     });
 
     return {
-      total,
+      total: devices.length,
       online,
       offline,
       fault,
-      onlineRate: total > 0 ? (online / total) * 100 : 0,
+      onlineRate: devices.length > 0 ? (online / devices.length) * 100 : 0,
       types: typeStats.map((t) => ({
         type: t.type,
         count: t._count.type,
