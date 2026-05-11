@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { Cron, CronExpression } from "@nestjs/schedule";
+import { Cron } from "@nestjs/schedule";
 import { DevicesService } from "../devices/devices.service";
 import { DataRecordsService } from "../data-records/data-records.service";
 import { AlertsService } from "../alerts/alerts.service";
@@ -45,6 +45,18 @@ export class SchedulerService {
       this.logger.debug("定时数据生成任务完成");
     } catch (error) {
       this.logger.error(`定时任务执行失败: ${error.message}`);
+    }
+  }
+
+  @Cron("0 * * * * *")
+  async handleDLQRetry() {
+    this.logger.debug("开始执行 DLQ 数据重试任务...");
+
+    try {
+      await this.dataRecordsService.processDLQ();
+      this.logger.debug("DLQ 数据重试任务完成");
+    } catch (error) {
+      this.logger.error(`DLQ 数据重试任务失败: ${error.message}`);
     }
   }
 }
